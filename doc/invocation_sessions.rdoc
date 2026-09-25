@@ -1,0 +1,93 @@
+= Invocation Sessions
+
+Rake::InvocationSession lets a long lived process invoke the same task
+graph multiple times without calling the global (task level) +reenable+
+between runs.
+
+== The Problem
+
+Traditionally, Rake records invocation state on the task objects
+themselves: once a task has been invoked, Task#already_invoked is true
+and the task will not run again unless Task#reenable is called.  In a
+long lived process (a server, a REPL, a test harness) that wants to run
+the same graph over and over, this forces a global reset of every task
+and shares failure state across unrelated runs.
+
+== The Solution
+
+An invocation session owns all runtime invocation state:
+
+* the +already_invoked+ flag for each task,
+* the exception recorded for failed invocations, and
+* the invocation chain used for circular dependency detection.
+
+Task definitions (prerequisites and the action list) remain shared and
+are treated as read-only by sessions; invoking through a session never
+mutates them.
+
+== Ruby API
+
+  require "rake"
+
+  session = Rake::InvocationSession.new   # bound to Rake.application
+  session = app.invocation_session        # or bound to a specific app
+
+  session.invoke(:default)          # run the graph once
+  session.invoke(:default)          # no-op: already invoked in this session
+  session.invoke(:compile, "debug") # arguments are passed through
+
+  Rake::Task[:compile].invoke_in_session(session, "debug") # same thing
+
+  session.already_invoked?(Rake::Task[:compile])      # => true
+  session.invocation_exception(Rake::Task[:compile])  # => nil or exception
+  session[:compile]                                    # task lookup
+
+Each new session starts empty, so a fresh session runs the whole graph
+again, completely independent of any other session.
+
+== Semantics
+
+* <b>Shared prerequisites run once per session.</b>  In a diamond
+  dependency (top => left, right => base), +base+ executes exactly once
+  per session no matter how many branches reach it.
+
+* <b>Concurrent branches wait for the result.</b>  When MultiTask
+  branches reach the same prerequisite concurrently, the branches that
+  arrive later block on a per-task session lock until the first
+  execution finishes.  They then observe the recorded result; merely
+  seeing that the task has started is never treated as success.
+
+* <b>Failures propagate within a session.</b>  A failed task records its
+  exception in the session.  Every later invocation of that task in the
+  same session (from any branch or thread) re-raises the recorded
+  exception without re-running the task.
+
+* <b>Sessions are independent.</b>  A failure recorded in one session
+  does not leak into another session, and each session runs the graph
+  for itself.
+
+* <b>Recursive invocations share a chain.</b>  Actions that call
+  session.invoke (or Task#invoke_in_session) continue the current
+  invocation chain, so circular dependencies are detected across
+  recursive, action-driven invocations.
+
+* <b>Arguments are isolated.</b>  Every invocation builds its own
+  Rake::TaskArguments, so concurrent sessions (or branches) never see
+  each other's argument values.
+
+== Compatibility
+
+The traditional API is unchanged:
+
+* Rake::Task#invoke and Rake::Task#execute behave exactly as before,
+  including the task level +already_invoked+ flag and Task#reenable.
+* Session invocations do not touch the task level flags, so mixing
+  session.invoke and task.invoke does not interfere.
+* Rake::Task#invoke_with_call_chain and Rake::Task#invoke_prerequisites
+  accept an optional trailing session argument; existing callers that
+  pass two arguments are unaffected.
+
+== Example
+
+See doc/example/invocation_session_demo.rb for a runnable demo that
+logs two sessions executing a diamond dependency graph.

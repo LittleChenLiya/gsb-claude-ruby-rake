@@ -188,14 +188,28 @@ module Rake
       invoke_with_call_chain(task_args, InvocationChain::EMPTY)
     end
 
+    # Invoke the task inside the given Rake::InvocationSession.  The
+    # session, rather than the task, records whether the task was already
+    # invoked and any failure that occurred, so the task definition and
+    # its action list stay untouched and shared.  See
+    # Rake::InvocationSession for details.
+    def invoke_in_session(session, *args)
+      task_args = TaskArguments.new(arg_names, args)
+      invoke_with_call_chain(task_args, session.current_chain, session)
+    end
+
     # Same as invoke, but explicitly pass a call chain to detect
     # circular dependencies.
     #
     # If multiple tasks depend on this
     # one in parallel, they will all fail if the first execution of
     # this task fails.
-    def invoke_with_call_chain(task_args, invocation_chain)
+    def invoke_with_call_chain(task_args, invocation_chain, session=nil)
       new_chain = Rake::InvocationChain.append(self, invocation_chain)
+      if session
+        invoke_with_session_state(session, task_args, new_chain)
+        return
+      end
       @lock.synchronize do
         begin
           if application.options.trace
@@ -226,6 +240,44 @@ module Rake
     end
     protected :invoke_with_call_chain
 
+    # Invoke the task, storing all runtime state in the session instead of
+    # the task.  Concurrent invocations of this task in the same session
+    # block on the session's per-task lock until the first execution
+    # completes, then observe its result (success or recorded failure)
+    # without re-running.
+    def invoke_with_session_state(session, task_args, new_chain) # :nodoc:
+      session.with_task_state(self) do |state|
+        begin
+          if application.options.trace
+            application.trace "** Invoke #{name} #{format_trace_flags(state)}"
+          end
+
+          if state.already_invoked
+            if state.invocation_exception
+              if application.options.trace
+                application.trace "** Previous invocation of #{name} failed #{format_trace_flags(state)}"
+              end
+              raise state.invocation_exception
+            else
+              return
+            end
+          end
+
+          state.already_invoked = true
+
+          session.with_chain(new_chain) do
+            invoke_prerequisites(task_args, new_chain, session)
+            execute(task_args) if needed?
+          end
+        rescue Exception => ex
+          add_chain_to(ex, new_chain)
+          state.invocation_exception = ex
+          raise ex
+        end
+      end
+    end
+    private :invoke_with_session_state
+
     def add_chain_to(exception, new_chain) # :nodoc:
       exception.extend(InvocationExceptionMixin) unless
         exception.respond_to?(:chain)
@@ -234,23 +286,23 @@ module Rake
     private :add_chain_to
 
     # Invoke all the prerequisites of a task.
-    def invoke_prerequisites(task_args, invocation_chain) # :nodoc:
+    def invoke_prerequisites(task_args, invocation_chain, session=nil) # :nodoc:
       if application.options.always_multitask
-        invoke_prerequisites_concurrently(task_args, invocation_chain)
+        invoke_prerequisites_concurrently(task_args, invocation_chain, session)
       else
         prerequisite_tasks.each { |p|
           prereq_args = task_args.new_scope(p.arg_names)
-          p.invoke_with_call_chain(prereq_args, invocation_chain)
+          p.invoke_with_call_chain(prereq_args, invocation_chain, session)
         }
       end
     end
 
     # Invoke all the prerequisites of a task in parallel.
-    def invoke_prerequisites_concurrently(task_args, invocation_chain)# :nodoc:
+    def invoke_prerequisites_concurrently(task_args, invocation_chain, session=nil) # :nodoc:
       futures = prerequisite_tasks.map do |p|
         prereq_args = task_args.new_scope(p.arg_names)
         application.thread_pool.future(p) do |r|
-          r.invoke_with_call_chain(prereq_args, invocation_chain)
+          r.invoke_with_call_chain(prereq_args, invocation_chain, session)
         end
       end
       # Iterate in reverse to improve performance related to thread waiting and switching
@@ -258,9 +310,10 @@ module Rake
     end
 
     # Format the trace flags for display.
-    def format_trace_flags
+    def format_trace_flags(state=nil)
+      already_invoked = state ? state.already_invoked : @already_invoked
       flags = []
-      flags << "first_time" unless @already_invoked
+      flags << "first_time" unless already_invoked
       flags << "not_needed" unless needed?
       flags.empty? ? "" : "(" + flags.join(", ") + ")"
     end

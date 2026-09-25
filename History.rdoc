@@ -1,3 +1,11 @@
+=== Unreleased
+
+* Add Rake::InvocationSession: run the same task graph multiple times in
+  a long lived process without global reenable.  Per-session
+  already_invoked flags, failure state and invocation chains; concurrent
+  MultiTask branches wait for shared prerequisites; traditional
+  Task#invoke behavior is unchanged.
+
 === 13.2.1
 
 * Suppressed "internal:array:52:in 'Array#each'" from backtrace by @hsbt in #554

@@ -164,6 +164,13 @@ module Rake
       @loaders[ext] = loader
     end
 
+    # Create a new Rake::InvocationSession bound to this application.
+    # Sessions let long lived processes invoke the same task graph
+    # multiple times without calling reenable on individual tasks.
+    def invocation_session
+      Rake::InvocationSession.new(self)
+    end
+
     # Application options from the command line
     def options
       @options ||= Options.new
