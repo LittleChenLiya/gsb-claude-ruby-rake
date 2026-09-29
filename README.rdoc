@@ -70,6 +70,32 @@ Running the "rake" command without any options will cause it to run the
 
 Type "rake --help" for all available options.
 
+=== Read only Preview
+
+Rake::TaskPreview performs a read only dry run: it reports which tasks
+would run and which prerequisite makes a file task out of date, without
+executing any action, writing any file, or calling a user defined +needed?+
+method.  Pass the target task and an optional, injectable file status
+provider (answering +exist?+ and +mtime+).  File state is snapshotted once
+per preview, and the report order mirrors a real prerequisites first
+invocation.
+
+  require "rake"
+
+  Rake.application.load_rakefile
+
+  status = Object.new
+  def status.exist?(name)
+    # hypothetical file system state
+  end
+  def status.mtime(name)
+    # hypothetical modification time
+  end
+
+  report = Rake::TaskPreview.preview("app.exe", status)
+  report.needed_names          # => ["mid.o", "app.exe"]
+  puts report                  # human readable, with stale causes
+
 == Resources
 
 === Rake Information

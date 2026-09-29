@@ -79,9 +79,17 @@ module Rake
     end
 
     def synthesize_file_task(task_name) # :nodoc:
-      return nil unless File.exist?(task_name)
+      return nil unless file_status.exist?(task_name)
       define_task(Rake::FileTask, task_name)
     end
+
+    # The source of file system state used while resolving rules.  Defaults
+    # to the real file system but may be replaced to evaluate the task
+    # graph against an injected, hypothetical state (see Rake::TaskPreview).
+    def file_status
+      @file_status ||= Rake::FileStatus.new
+    end
+    attr_writer :file_status
 
     # Resolve the arguments for a task/rule.  Returns a tuple of
     # [task_name, arg_name_list, prerequisites, order_only_prerequisites].
@@ -272,7 +280,7 @@ module Rake
       sources = make_sources(task_name, task_pattern, extensions)
       prereqs = sources.map { |source|
         trace_rule level, "Attempting Rule #{task_name} => #{source}"
-        if File.exist?(source) || Rake::Task.task_defined?(source)
+        if file_status.exist?(source) || Rake::Task.task_defined?(source)
           trace_rule level, "(#{task_name} => #{source} ... EXIST)"
           source
         elsif parent = enhance_with_matching_rule(source, level + 1)

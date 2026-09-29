@@ -46,6 +46,7 @@ require_relative "rake/pseudo_status"
 require_relative "rake/options"
 require_relative "rake/task_arguments"
 require_relative "rake/invocation_chain"
+require_relative "rake/file_status"
 require_relative "rake/task"
 require_relative "rake/file_task"
 require_relative "rake/file_creation_task"
@@ -60,6 +61,7 @@ require_relative "rake/name_space"
 require_relative "rake/task_manager"
 require_relative "rake/application"
 require_relative "rake/backtrace"
+require_relative "rake/task_preview"
 
 # :stopdoc:
 #
