@@ -78,6 +78,7 @@ Gem::Specification.new do |s|
     "lib/rake/pseudo_status.rb",
     "lib/rake/rake_module.rb",
     "lib/rake/rake_test_loader.rb",
+    "lib/rake/rehearsal.rb",
     "lib/rake/rule_recursion_overflow_error.rb",
     "lib/rake/scope.rb",
     "lib/rake/task.rb",
