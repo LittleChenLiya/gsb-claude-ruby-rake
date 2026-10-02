@@ -172,6 +172,28 @@ module Rake
       to_ary == array
     end
 
+    # Return an eagerly resolved, immutable Rake::FileList::Snapshot of this
+    # file list. The snapshot records, for every path, which include rules
+    # matched it (explicit file names and glob patterns are tracked
+    # separately) and which exclude rule, if any, finally removed it.
+    #
+    # Unlike reading the (lazy) file list itself, taking a snapshot does not
+    # resolve or mutate this FileList: its pending patterns remain pending.
+    # The snapshot copies the paths it needs, so files created later or
+    # exclude rules changed afterwards never affect the already generated
+    # snapshot.
+    #
+    # Example:
+    #   file_list = FileList["a.rb", "*.rb"].exclude("b.rb")
+    #   snap = file_list.snapshot
+    #   snap.paths                       # => ["a.rb"]
+    #   snap["a.rb"].include_sources     # => explicit "a.rb" and glob "*.rb"
+    #   snap["b.rb"].excluded_by.rule    # => "b.rb"
+    #
+    def snapshot
+      Snapshot.new(self)
+    end
+
     # Return the internal array object.
     def to_a
       resolve
@@ -433,3 +455,5 @@ module Rake
     end
   end
 end # module Rake
+
+require_relative "file_list_snapshot"

@@ -1,3 +1,10 @@
+=== Unreleased
+
+* Add Rake::FileList#snapshot for an eagerly resolved, immutable snapshot
+  that records, per path, the explicit and glob include rules that matched
+  it and the exclude rule that finally removed it, without resolving the
+  lazy FileList.
+
 === 13.2.1
 
 * Suppressed "internal:array:52:in 'Array#each'" from backtrace by @hsbt in #554
