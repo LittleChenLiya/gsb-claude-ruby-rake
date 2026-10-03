@@ -60,6 +60,31 @@ module Rake
       Rake::Task.define_task(*args, &block)
     end
 
+    # Declare a typed parameter for a task.  The parameter is bound
+    # (converted from its raw string value) before the task's action
+    # executes.  The task must already be defined.
+    #
+    #   task :build, [:count] do |t, args|
+    #     puts args.count  # => 2 (Integer)
+    #   end
+    #   parameter :build, :count, Integer
+    #
+    #   parameter :build, :mode, String, required: false, default: "debug"
+    #   parameter :build, :retries, default: 3
+    #   parameter :build, :label do |v|
+    #     v.strip
+    #   end
+    #
+    # The +task_name+ is looked up in the current scope, so parameters
+    # declared inside a +namespace+ apply to the namespaced task.
+    #
+    def parameter(task_name, param_name, converter = nil,
+                  required: true, default: nil, &block) # :doc:
+      Rake::Task.define_parameter(task_name, param_name, converter,
+                                  required: required, default: default,
+                                  &block)
+    end
+
     # Declare a file task.
     #
     # Example:

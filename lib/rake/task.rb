@@ -109,6 +109,7 @@ module Rake
       @locations       = []
       @invocation_exception = nil
       @order_only_prerequisites = []
+      @parameter_schema = nil
     end
 
     # Enhance a task with prerequisites or actions.  Returns self.
@@ -179,6 +180,7 @@ module Rake
     # Clear the existing arguments on a rake task.
     def clear_args
       @arg_names = nil
+      @parameter_schema = nil
       self
     end
 
@@ -215,6 +217,8 @@ module Rake
 
           @already_invoked = true
 
+          task_args = bind_args(task_args)
+
           invoke_prerequisites(task_args, new_chain)
           execute(task_args) if needed?
         rescue Exception => ex
@@ -225,6 +229,16 @@ module Rake
       end
     end
     protected :invoke_with_call_chain
+
+    # Bind the raw string arguments of this task to typed values according
+    # to the task's parameter schema.  Binding happens once per invocation,
+    # before prerequisites run and before the action executes.  Returns a
+    # new TaskArguments; the receiver's arguments are not modified.
+    def bind_args(task_args) # :nodoc:
+      return task_args unless has_parameter_schema?
+      task_args.bind(parameter_schema, name)
+    end
+    private :bind_args
 
     def add_chain_to(exception, new_chain) # :nodoc:
       exception.extend(InvocationExceptionMixin) unless
@@ -349,6 +363,36 @@ module Rake
       @arg_names = args.map(&:to_sym)
     end
 
+    # Declare a typed parameter for this task.  The parameter is bound
+    # (converted from its raw string value) before the task's action
+    # executes.  Returns self.
+    #
+    #   task.parameter(:count, Integer)
+    #   task.parameter(:mode, String, required: false, default: "debug")
+    #   task.parameter(:retries, default: 3)
+    #   task.parameter(:label) { |v| v.strip }
+    def parameter(param_name, converter = nil, required: true, default: nil, &block)
+      @parameter_schema ||= {}
+      param_name = param_name.to_sym
+      param = Parameter.new(param_name, converter,
+                            required: required, default: default, &block)
+      @parameter_schema[param.name] = param
+      @arg_names ||= []
+      @arg_names << param.name unless @arg_names.include?(param.name)
+      self
+    end
+
+    # The parameter schema for this task (a Hash of name => Parameter).
+    # Returns an empty Hash when no parameters are declared.
+    def parameter_schema
+      @parameter_schema || {}
+    end
+
+    # Returns true if this task declares any typed parameters.
+    def has_parameter_schema?
+      @parameter_schema && !@parameter_schema.empty?
+    end
+
     # Return a string describing the internal state of a task.  Useful for
     # debugging.
     def investigation
@@ -415,6 +459,18 @@ module Rake
       # the existing task.  Returns the defined task.
       def define_task(*args, &block)
         Rake.application.define_task(self, *args, &block)
+      end
+
+      # Declare a typed parameter on the task named +task_name+.  The task
+      # must already be defined.  Returns the task.
+      #
+      #   Rake::Task.define_parameter(:build, :count, Integer)
+      #
+      def define_parameter(task_name, param_name, converter = nil,
+                           required: true, default: nil, &block)
+        task = Rake.application[task_name]
+        task.parameter(param_name, converter,
+                       required: required, default: default, &block)
       end
 
       # Define a rule for synthesizing tasks.

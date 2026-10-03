@@ -1,0 +1,109 @@
+= Typed Parameter Binding
+
+Rake tasks accept arguments as raw strings from the command line.  The
+typed parameter binding layer lets you declare, for each parameter, a
+converter, whether it is required, and a default value.  All conversions
+happen before the task's action executes, so a failed conversion never
+leaves half-bound values behind.
+
+The original string parameter interface is unchanged: tasks without a
+parameter schema still receive plain strings.
+
+== Declaring parameters
+
+Use the +parameter+ DSL method after the task is defined:
+
+  task :build, [:count] do |t, args|
+    puts args[:count]  # => 2 (Integer)
+  end
+  parameter :build, :count, Integer
+
+The +parameter+ method takes the task name, the parameter name, and a
+converter (any callable, or one of the bare conversion classes
+Integer, Float, String, ...):
+
+  parameter :build, :mode, String, required: false, default: "debug"
+  parameter :build, :retries, default: 3
+  parameter :build, :label do |v|
+    v.strip
+  end
+
+The task is looked up in the current scope, so parameters declared
+inside a +namespace+ apply to the namespaced task.
+
+== Converters
+
+A converter is any object that responds to +call+.  The built-in
+converters are:
+
+  Rake::Converters::INTEGER  # ->(v) { Integer(v) }
+  Rake::Converters::FLOAT    # ->(v) { Float(v) }
+  Rake::Converters::STRING   # ->(v) { String(v) }
+  Rake::Converters::SYMBOL   # ->(v) { v.to_sym }
+  Rake::Converters::BOOLEAN  # true/false for common boolean strings
+
+Bare conversion classes (+Integer+, +Float+, +String+, ...) are wrapped
+in a cached lambda that calls the corresponding Kernel conversion
+method, so the same class always yields the same converter object.
+
+== Required parameters and defaults
+
+A parameter is required by default.  A required parameter with no value
+and no default raises Rake::ParameterMissing.  An optional parameter
+(+required: false+) with no value and no default is nil.
+
+A default may be a value or a factory (a callable).  A factory is called
+at most once per task invocation:
+
+  parameter :build, :count, Integer, default: 5
+  parameter :build, :count, Integer, default: -> { compute_default }
+
+Defaults only fill missing values.  An explicit empty string (+""+) is
+not replaced by a default; it is passed to the converter (and fails if
+the converter cannot handle it).
+
+== Inheritance between tasks
+
+When a task invokes a prerequisite, the prerequisite's arguments are
+inherited from the parent.  If the prerequisite declares the same
+converter (the same converter object), the already-bound value is
+reused without converting again:
+
+  converter = ->(v) { Integer(v) }
+  task :compile, [:count] do |t, args|
+    args[:count]  # => 2 (Integer)
+  end
+  parameter :compile, :count, converter
+  task :build, [:count] => [:compile] do |t, args|
+    args[:count]  # => 2 (Integer)
+  end
+  parameter :build, :count, converter
+
+  Rake::Task[:build].invoke("2")
+  # The converter is called exactly once.
+
+If the prerequisite declares a different converter, the original raw
+text is re-checked with the new converter.  A failure is reported with
+the task path:
+
+  Rake::ParameterBindingError: cannot convert parameter 'count' of task 'compile' ...
+
+== Errors
+
+* Rake::ParameterMissing -- a required parameter is missing and has no
+  default.
+* Rake::ParameterBindingError -- a parameter value could not be
+  converted.  It carries the +task_path+, +param_name+, +raw_value+, and
+  the +original+ exception raised by the converter.
+
+== Atomicity
+
+Binding is atomic: every parameter is converted before the bound
+argument object is returned.  If any conversion fails, an error is
+raised and no half-bound argument object is returned.  The parent
+argument object is never modified.
+
+== Demo
+
+See +doc/parameter_binding_demo.rb+ for a runnable demo that prints the
+bound values and the conversion count for each scenario.

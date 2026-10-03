@@ -76,6 +76,7 @@ Type "rake --help" for all available options.
 
 * {Rake command-line}[rdoc-ref:doc/command_line_usage.rdoc]
 * {Writing Rakefiles}[rdoc-ref:doc/rakefile.rdoc]
+* {Typed Parameter Binding}[rdoc-ref:doc/parameter_binding.rdoc]
 * The original {Rake announcement}[rdoc-ref:doc/rational.rdoc]
 * Rake {glossary}[rdoc-ref:doc/glossary.rdoc]
 
