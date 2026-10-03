@@ -1,3 +1,12 @@
+=== Unreleased
+
+* Add Rake::Task#with_temporary_action and
+  Rake::TaskManager#with_temporary_action to temporarily replace a
+  task's actions inside a block scope.  The original actions and the
+  previously invoked state are restored on exit (even on exception),
+  nested overrides restore in LIFO order, prerequisites are kept, and
+  the override is isolated per Rake::Application.
+
 === 13.2.1
 
 * Suppressed "internal:array:52:in 'Array#each'" from backtrace by @hsbt in #554

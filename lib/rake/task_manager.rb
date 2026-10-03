@@ -235,6 +235,27 @@ module Rake
       @scope = @scope.tail
     end
 
+    ##
+    # Execute the given block while the actions of the task named
+    # +task_name+ are temporarily replaced by +action+.
+    #
+    # +task_name+ must be the full, explicit name of an already
+    # defined task (e.g. "namespace:task").  The name is looked up
+    # directly among the tasks defined in this task manager: no scope
+    # resolution, rule matching, or file task synthesis is attempted.
+    # Raises a RuntimeError if no such task has been defined.
+    #
+    # The override is scoped to this task manager (and therefore to
+    # its Rake::Application); other applications are not affected.
+    # See Rake::Task#with_temporary_action for the exact save/restore
+    # semantics.
+    def with_temporary_action(task_name, action, &block)
+      raise ArgumentError, "a block is required" unless block
+      task = @tasks[task_name.to_s] or
+        fail "Don't know how to temporarily override undefined task '#{task_name}'"
+      task.with_temporary_action(action, &block)
+    end
+
     private
 
     # Add a location to the locations field of the given task.

@@ -182,6 +182,46 @@ module Rake
       self
     end
 
+    ##
+    # Execute the given block while the actions of this task are
+    # temporarily replaced by +action+.  Intended for one-off
+    # verifications that need to substitute a task's behavior without
+    # permanently modifying the task:
+    #
+    # * Prerequisites (dependencies) are left untouched.
+    # * The +already_invoked+ state (and any stored invocation
+    #   exception) is saved on entry and restored on exit, so invoking
+    #   the task inside the block does not mark it as invoked for the
+    #   code after the block.
+    # * The original actions and invocation state are restored when
+    #   the block exits, even if it raises.  Nested overrides are
+    #   restored in last-in, first-out order.
+    #
+    # The saved state lives on the task itself, so tasks owned by
+    # different Rake::Application instances are fully isolated, and
+    # the behavior of #clear and #reenable is unchanged.
+    #
+    #   Rake::Task["pkg:build"].with_temporary_action(->(t, args) { ... }) do
+    #     Rake::Task["pkg:build"].invoke
+    #   end
+    #
+    def with_temporary_action(action)
+      raise ArgumentError, "a temporary action is required" if action.nil?
+      raise ArgumentError, "a block is required" unless block_given?
+
+      saved_actions              = @actions
+      saved_already_invoked      = @already_invoked
+      saved_invocation_exception = @invocation_exception
+      @actions = [action]
+      begin
+        yield self
+      ensure
+        @actions              = saved_actions
+        @already_invoked      = saved_already_invoked
+        @invocation_exception = saved_invocation_exception
+      end
+    end
+
     # Invoke the task if it is needed.  Prerequisites are invoked first.
     def invoke(*args)
       task_args = TaskArguments.new(arg_names, args)
