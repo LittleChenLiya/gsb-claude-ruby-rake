@@ -687,4 +687,142 @@ class TestRakeFileList < Rake::TestCase # :nodoc:
     assert File.exist?(File.join(@cdir, "x.c"))
   end
 
+  def setup_rb_files
+    FileUtils.touch "a.rb"
+    FileUtils.touch "b.rb"
+  end
+
+  def test_snapshot_two_includes_hit_same_file
+    setup_rb_files
+    fl = FileList.new
+    fl.include("a.rb")
+    fl.include("*.rb")
+    snapshot = fl.snapshot
+    entry = snapshot.entries.find { |e| e.path == "a.rb" }
+    assert_equal 2, entry.sources.size
+    assert_equal :explicit, entry.sources[0].type
+    assert_equal "a.rb", entry.sources[0].pattern
+    assert_equal :glob, entry.sources[1].type
+    assert_equal "*.rb", entry.sources[1].pattern
+  end
+
+  def test_snapshot_exclude_rule
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    fl.exclude("b.rb")
+    snapshot = fl.snapshot
+    assert_equal ["a.rb"], snapshot.paths
+    entry = snapshot.entries.find { |e| e.path == "b.rb" }
+    assert_equal :explicit, entry.excluded_by.type
+    assert_equal "b.rb", entry.excluded_by.rule
+  end
+
+  def test_snapshot_stable_after_new_file
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    snapshot = fl.snapshot
+    original = snapshot.paths.dup
+    File.write("c.rb", "")
+    assert_equal original, snapshot.paths
+    assert ! snapshot.paths.include?("c.rb")
+  end
+
+  def test_snapshot_stable_after_exclude_change
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    snapshot = fl.snapshot
+    fl.exclude("a.rb")
+    assert_equal ["a.rb", "b.rb"], snapshot.paths
+  end
+
+  def test_snapshot_explicit_vs_glob_sources
+    setup_rb_files
+    fl = FileList.new
+    fl.include("a.rb")
+    fl.include("*.rb")
+    snapshot = fl.snapshot
+    a_entry = snapshot.entries.find { |e| e.path == "a.rb" }
+    b_entry = snapshot.entries.find { |e| e.path == "b.rb" }
+    assert_equal :explicit, a_entry.sources[0].type
+    assert_equal :glob, a_entry.sources[1].type
+    assert_equal :glob, b_entry.sources[0].type
+  end
+
+  def test_snapshot_does_not_modify_lazy_state
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    assert fl.instance_variable_get(:@pending)
+    snapshot = fl.snapshot
+    assert fl.instance_variable_get(:@pending)
+    assert_equal ["a.rb", "b.rb"], fl.resolve
+  end
+
+  def test_snapshot_to_a_returns_fresh_array
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    snapshot = fl.snapshot
+    arr = snapshot.to_a
+    arr << "z.rb"
+    assert_equal ["a.rb", "b.rb"], snapshot.paths
+  end
+
+  def test_snapshot_path_order_stable
+    setup_rb_files
+    fl = FileList.new
+    fl.include("b.rb")
+    fl.include("a.rb")
+    snapshot = fl.snapshot
+    assert_equal ["b.rb", "a.rb"], snapshot.paths
+  end
+
+  def test_snapshot_glob_exclude_rule
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    fl.exclude("*.rb")
+    snapshot = fl.snapshot
+    assert_equal [], snapshot.paths
+    entry = snapshot.entries.find { |e| e.path == "a.rb" }
+    assert_equal :glob, entry.excluded_by.type
+    assert_equal "*.rb", entry.excluded_by.rule
+  end
+
+  def test_snapshot_regexp_exclude_rule
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    fl.exclude(/^b/)
+    snapshot = fl.snapshot
+    assert_equal ["a.rb"], snapshot.paths
+    entry = snapshot.entries.find { |e| e.path == "b.rb" }
+    assert_equal :regexp, entry.excluded_by.type
+    assert_equal(/^b/, entry.excluded_by.rule)
+  end
+
+  def test_snapshot_proc_exclude_rule
+    setup_rb_files
+    fl = FileList.new
+    fl.include("*.rb")
+    fl.exclude { |fn| fn == "b.rb" }
+    snapshot = fl.snapshot
+    assert_equal ["a.rb"], snapshot.paths
+    entry = snapshot.entries.find { |e| e.path == "b.rb" }
+    assert_equal :proc, entry.excluded_by.type
+  end
+
+  def test_snapshot_direct_add_source
+    setup_rb_files
+    fl = FileList.new
+    fl << "a.rb"
+    snapshot = fl.snapshot
+    entry = snapshot.entries.find { |e| e.path == "a.rb" }
+    assert_equal :explicit, entry.sources[0].type
+    assert_equal "a.rb", entry.sources[0].pattern
+  end
+
 end

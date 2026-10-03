@@ -23,6 +23,19 @@ module Rake
 
     include Cloneable
 
+    # Source rule for a path in a snapshot.
+    #
+    # +type+ is either :explicit (a literal file name) or :glob
+    # (a glob pattern that was expanded against the file system).
+    # +pattern+ is the original pattern string.
+    Source = Struct.new(:type, :pattern, keyword_init: true)
+
+    # Rule that excluded a path from a snapshot.
+    #
+    # +type+ is one of :regexp, :glob, :explicit, or :proc.
+    # +rule+ is the pattern or proc that performed the exclusion.
+    Exclude = Struct.new(:type, :rule, keyword_init: true)
+
     # == Method Delegation
     #
     # The lazy evaluation magic of FileLists happens by implementing all the
@@ -102,6 +115,8 @@ module Rake
       @exclude_patterns = DEFAULT_IGNORE_PATTERNS.dup
       @exclude_procs = DEFAULT_IGNORE_PROCS.dup
       @items = []
+      @include_patterns = []
+      @direct_adds = []
       patterns.each { |pattern| include(pattern) }
       yield self if block_given?
     end
@@ -119,7 +134,9 @@ module Rake
         if fn.respond_to? :to_ary
           include(*fn.to_ary)
         else
-          @pending_add << Rake.from_pathname(fn)
+          obj = Rake.from_pathname(fn)
+          @pending_add << obj
+          @include_patterns << obj
         end
       end
       @pending = true
@@ -202,7 +219,9 @@ module Rake
 
     def <<(obj)
       resolve
-      @items << Rake.from_pathname(obj)
+      obj = Rake.from_pathname(obj)
+      @items << obj
+      @direct_adds << obj
       self
     end
 
@@ -217,12 +236,54 @@ module Rake
       self
     end
 
+    # Return a stable snapshot of the file list's current state.
+    #
+    # The snapshot resolves the list at call time and records the
+    # include rules that matched each path and the exclude rule that
+    # removed it.  The original file list is not modified; its lazy
+    # state is left untouched.
+    #
+    # Example:
+    #
+    #   fl = FileList.new("*.rb")
+    #   snapshot = fl.snapshot
+    #   snapshot.paths                # => ["a.rb", "b.rb"]
+    #   snapshot.entries.first.sources
+    #   # => [#<struct Rake::FileList::Source type=:glob, pattern="*.rb">]
+    #
+    def snapshot
+      Snapshot.new(self)
+    end
+
+    # The include patterns in include order.
+    attr_reader :include_patterns
+
+    # The direct additions (via <<) in order.
+    attr_reader :direct_adds
+
+    # The exclude rules in order (patterns first, then procs).
+    def exclude_rules
+      rules = []
+      @exclude_patterns.each do |pat|
+        type = case pat
+               when Regexp then :regexp
+               when GLOB_PATTERN then :glob
+               else :explicit
+               end
+        rules << Exclude.new(type: type, rule: pat)
+      end
+      @exclude_procs.each do |p|
+        rules << Exclude.new(type: :proc, rule: p)
+      end
+      rules
+    end
+
     def resolve_add(fn) # :nodoc:
       case fn
       when GLOB_PATTERN
         add_matching(fn)
       else
-        self << fn
+        @items << fn
       end
     end
     private :resolve_add
@@ -349,7 +410,7 @@ module Rake
     # Add matching glob patterns.
     def add_matching(pattern)
       self.class.glob(pattern).each do |fn|
-        self << fn unless excluded_from_list?(fn)
+        @items << fn unless excluded_from_list?(fn)
       end
     end
     private :add_matching
@@ -406,6 +467,146 @@ module Rake
       # the files returned are guaranteed to be sorted.
       def glob(pattern, *args)
         Dir.glob(pattern, *args).sort
+      end
+    end
+
+    ##
+    # A Snapshot is a stable, point-in-time record of a FileList's
+    # resolved contents.
+    #
+    # Unlike a FileList, which is lazily evaluated and changes as files
+    # are added or excluded, a Snapshot is computed once and never
+    # changes.  Each entry records the path, the include rules that
+    # matched it (its "sources"), and the exclude rule that removed it
+    # (if any).
+    #
+    # Example:
+    #
+    #   fl = FileList.new
+    #   fl.include("a.rb")
+    #   fl.include("*.rb")
+    #   fl.exclude("b.rb")
+    #   snapshot = fl.snapshot
+    #
+    #   snapshot.entries.each do |entry|
+    #     puts "#{entry.path}:"
+    #     entry.sources.each do |source|
+    #       puts "  included by #{source.type}: #{source.pattern}"
+    #     end
+    #     if entry.excluded_by
+    #       puts "  excluded by #{entry.excluded_by.type}: #{entry.excluded_by.rule}"
+    #     end
+    #   end
+    #
+    class Snapshot
+      # A single path entry in a snapshot.
+      #
+      # +path+ is the file path.
+      # +sources+ is an array of Source rules that matched the path,
+      # in include order.
+      # +excluded_by+ is the Exclude rule that removed the path, or nil
+      # if the path is included.
+      Entry = Struct.new(:path, :sources, :excluded_by, keyword_init: true)
+
+      # Create a snapshot of the given file list.
+      #
+      # The file list is read but not modified; its lazy state is left
+      # untouched.
+      def initialize(file_list)
+        @entries = build_entries(file_list).freeze
+        @paths = @entries.reject { |e| e.excluded_by }.map(&:path).freeze
+        freeze
+      end
+
+      # All entries (included and excluded paths) in path order.
+      attr_reader :entries
+
+      # The included paths in stable order.
+      attr_reader :paths
+
+      # The included paths as a fresh array (safe to mutate).
+      def to_a
+        @paths.dup
+      end
+
+      # Iterate over the included paths.
+      def each(&block)
+        @paths.each(&block)
+      end
+
+      # The number of included paths.
+      def size
+        @paths.size
+      end
+
+      # The included path at the given index.
+      def [](index)
+        @paths[index]
+      end
+
+      private
+
+      def build_entries(file_list)
+        entries = {}
+        order = []
+
+        file_list.include_patterns.each do |pat|
+          source = Source.new(type: glob?(pat) ? :glob : :explicit, pattern: pat)
+          files = glob?(pat) ? file_list.class.glob(pat) : [pat]
+          files.each do |fn|
+            fn = Rake.from_pathname(fn)
+            add_source(entries, order, fn, source)
+          end
+        end
+
+        file_list.direct_adds.each do |fn|
+          source = Source.new(type: :explicit, pattern: fn)
+          add_source(entries, order, fn, source)
+        end
+
+        order.each do |fn|
+          file_list.exclude_rules.each do |rule|
+            if exclude_matches?(rule, fn)
+              entries[fn].excluded_by = rule
+              break
+            end
+          end
+        end
+
+        order.map do |fn|
+          entry = entries[fn]
+          entry.sources.freeze
+          entry.freeze
+          entry
+        end
+      end
+
+      def add_source(entries, order, fn, source)
+        if entries.key?(fn)
+          entries[fn].sources << source unless entries[fn].sources.include?(source)
+        else
+          order << fn
+          entries[fn] = Entry.new(path: fn, sources: [source], excluded_by: nil)
+        end
+      end
+
+      def glob?(pat)
+        pat =~ GLOB_PATTERN
+      end
+
+      def exclude_matches?(rule, fn)
+        case rule.type
+        when :regexp
+          fn =~ rule.rule
+        when :glob
+          flags = File::FNM_PATHNAME
+          flags |= File::FNM_EXTGLOB if defined? File::FNM_EXTGLOB
+          File.fnmatch?(rule.rule, fn, flags)
+        when :explicit
+          fn == rule.rule
+        when :proc
+          rule.rule.call(fn)
+        end
       end
     end
   end
