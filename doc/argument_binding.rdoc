@@ -1,0 +1,72 @@
+= Explicit Argument Binding
+
+Rake task arguments are strings by default, and that interface is
+unchanged.  The argument binding layer is an opt-in addition: a task
+declares, for each named argument, a converter, whether the argument
+is required, and an optional default.  All conversions are completed
+before any action of the task runs.
+
+== Declaring bindings
+
+Use Rake::Task#bind_argument for a single argument, or
+Rake::Task#bind_args with a hash for several at once:
+
+  task :deploy, [:count, :tag, :force]
+
+  Rake::Task[:deploy].bind_argument :count, as: :integer, required: true
+  Rake::Task[:deploy].bind_argument :tag,   default: -> { "untagged" }
+  Rake::Task[:deploy].bind_argument :force, as: :boolean
+
+  # equivalent hash form:
+  Rake::Task[:deploy].bind_args(
+    count: { as: :integer, required: true },
+    tag:   { default: -> { "untagged" } },
+    force: { as: :boolean }
+  )
+
+Converter options (pick one):
+
++as+::      the name of a registered converter from
+            Rake::ArgumentBinding::CONVERTERS (:string, :symbol,
+            :integer, :float, :boolean).
++convert+:: any callable, invoked with the raw string.
+a block::   used as the converter when neither +as+ nor +convert+
+            is given.
+
+Other options:
+
++required+:: when true, a missing argument aborts the invocation with
+             Rake::ArgumentBindingError.
++default+::  a plain value, or a factory callable.  The factory is
+             invoked at most once per task invocation, and only when
+             the argument is missing.
+
+== Semantics
+
+* Conversions all happen before the task action executes.  If any
+  conversion fails, the action is not executed and no partially bound
+  values are left in the TaskArguments of the caller; the original
+  argument objects are never mutated.
+
+* An explicit empty string is not the same as a missing argument.
+  "" is handed to the converter as-is; defaults only fill arguments
+  that were not supplied at all.
+
+* When a parent task already bound a value and a prerequisite
+  declares a compatible converter (the same converter object, e.g.
+  the same registered name), the bound value is reused without
+  re-conversion.  A prerequisite that declares a different converter
+  re-validates the original raw text against its own declaration.
+
+* Every failure raises Rake::ArgumentBindingError, whose message
+  carries the full task path (including namespaces) and the argument
+  name, e.g.:
+
+    Argument :count of task "ns:child": cannot convert "2" (...)
+
+== Demo
+
+See doc/example/argument_binding_demo.rb for a runnable Ruby demo
+that prints bound values and conversion counts:
+
+  ruby -Ilib doc/example/argument_binding_demo.rb

@@ -38,6 +38,10 @@ module Rake
     # will be skipped unless you reenable them.
     attr_reader :already_invoked
 
+    # The explicit argument binding declared for this task (a
+    # Rake::ArgumentBinding), or nil when no argument has been bound.
+    attr_reader :arg_binding
+
     # Return task name
     def to_s
       name
@@ -179,6 +183,52 @@ module Rake
     # Clear the existing arguments on a rake task.
     def clear_args
       @arg_names = nil
+      @arg_binding = nil
+      self
+    end
+
+    ##
+    # Declare a typed binding for the argument +name+.  The binding is
+    # resolved before any action of this task runs: every declared
+    # converter is applied to the raw (string) argument values, and if
+    # any conversion fails the actions are not executed and no
+    # partially bound values are stored.
+    #
+    # Options:
+    # * +as+       -- name of a registered converter
+    #   (Rake::ArgumentBinding::CONVERTERS: :string, :symbol,
+    #   :integer, :float, :boolean).
+    # * +convert+  -- any callable used as the converter (a block may
+    #   be given instead).
+    # * +required+ -- when true, a missing argument raises
+    #   Rake::ArgumentBindingError.
+    # * +default+  -- value (or factory callable, invoked at most once
+    #   per task invocation) used only when the argument is missing.
+    #   An explicit empty string is never replaced by the default.
+    #
+    # Values already bound by a parent task with a compatible
+    # converter are reused without re-conversion; a different
+    # declaration re-validates the original raw text.
+    #
+    # Returns self so declarations can be chained.
+    def bind_argument(name, as: nil, convert: nil, required: false, default: nil, &block)
+      @arg_binding ||= ArgumentBinding.new
+      @arg_binding.add(name, as: as, convert: convert,
+                       required: required, default: default, &block)
+      self
+    end
+
+    ##
+    # Declare several argument bindings at once.  Each key of
+    # +declarations+ is an argument name and each value is a hash of
+    # options accepted by #bind_argument.
+    #
+    #   task.bind_args(count: { as: :integer }, tag: { default: -> { "x" } })
+    #
+    def bind_args(declarations)
+      declarations.each do |name, options|
+        bind_argument(name, **options)
+      end
       self
     end
 
@@ -215,6 +265,8 @@ module Rake
 
           @already_invoked = true
 
+          task_args = bind_task_arguments(task_args)
+
           invoke_prerequisites(task_args, new_chain)
           execute(task_args) if needed?
         rescue Exception => ex
@@ -225,6 +277,17 @@ module Rake
       end
     end
     protected :invoke_with_call_chain
+
+    # Complete the declared argument binding (if any) before the
+    # prerequisites and actions run.  Returns a new TaskArguments
+    # carrying the bound values; the incoming arguments are never
+    # modified.  Raises Rake::ArgumentBindingError on any conversion
+    # failure, which aborts the invocation before any action runs.
+    def bind_task_arguments(task_args) # :nodoc:
+      return task_args if @arg_binding.nil? || @arg_binding.empty?
+      @arg_binding.bind(name, task_args)
+    end
+    private :bind_task_arguments
 
     def add_chain_to(exception, new_chain) # :nodoc:
       exception.extend(InvocationExceptionMixin) unless

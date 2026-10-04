@@ -7,6 +7,22 @@ module Rake
   class TaskArguments
     include Enumerable
 
+    ##
+    # A BoundArgument records the result of converting one argument
+    # through the Rake::ArgumentBinding layer: the +converter+ that
+    # produced the value, the original +raw+ text, and the bound
+    # +value+ itself.  Keeping the raw text allows a child task with a
+    # different declaration to re-validate the original input.
+    class BoundArgument
+      attr_reader :converter, :raw, :value
+
+      def initialize(converter, raw, value)
+        @converter = converter
+        @raw = raw
+        @value = value
+      end
+    end
+
     # Argument names
     attr_reader :names
 
@@ -17,6 +33,7 @@ module Rake
       @parent = parent
       @hash = {}
       @values = values
+      @bound = {}
       names.each_with_index { |name, i|
         next if values[i].nil? || values[i] == ""
         @hash[name.to_sym] = values[i]
@@ -34,10 +51,50 @@ module Rake
     end
 
     # Create a new argument scope using the prerequisite argument
-    # names.
+    # names.  Bound entries produced by the argument binding layer are
+    # carried over by name so a prerequisite with a compatible
+    # declaration can reuse the already converted value.
     def new_scope(names)
       values = names.map { |n| self[n] }
-      self.class.new(names, values + extras, self)
+      result = self.class.new(names, values + extras, self)
+      names.each do |n|
+        entry = bound_entry(n)
+        result.send(:store_bound_entry, n.to_sym, entry) if entry
+      end
+      result
+    end
+
+    # Return the BoundArgument recorded for +name+, searching the
+    # parent argument chain when needed.  Returns nil when the
+    # argument was never converted by the binding layer.
+    def bound_entry(name)
+      key = name.to_sym
+      if @bound.has_key?(key)
+        @bound[key]
+      elsif @parent
+        @parent.bound_entry(key)
+      end
+    end
+
+    # Return true when +name+ carries a bound (already converted)
+    # value.
+    def bound?(name)
+      !bound_entry(name).nil?
+    end
+
+    ##
+    # Return a new TaskArguments in which every entry of +entries+ (a
+    # hash of name => BoundArgument) is applied.  The receiver and its
+    # parents are never modified, so a binding that fails partway
+    # leaves no half-bound values behind.
+    def apply_binding(entries)
+      copy = dup
+      copy.instance_variable_set(:@hash, @hash.dup)
+      copy.instance_variable_set(:@bound, @bound.dup)
+      entries.each do |name, entry|
+        copy.send(:store_bound_entry, name.to_sym, entry)
+      end
+      copy
     end
 
     # Find an argument value by name or index.
@@ -99,6 +156,11 @@ module Rake
     end
 
     protected
+
+    def store_bound_entry(name, entry) # :nodoc:
+      @bound[name] = entry
+      @hash[name] = entry.value
+    end
 
     def lookup(name) # :nodoc:
       if @hash.has_key?(name)
