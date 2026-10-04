@@ -1,0 +1,48 @@
+= FingerprintFileTask demo
+
+This directory demonstrates Rake::FingerprintFileTask, a FileTask variant
+that decides whether to rebuild by comparing explicit content fingerprints
+(SHA-256 digests of the declared input files and of the output file) plus a
+caller supplied task version, instead of relying on file mtimes.
+
+Files:
+
+* +Rakefile+     -- declares <tt>fingerprint_file({ "upper.txt" => ["message.txt"] }, version: VERSION)</tt>
+* +message.txt+  -- the (only) input file
+* +README.rdoc+  -- this file
+
+Run it with the rake from this repository:
+
+  ruby -I../../../lib ../../../exe/rake
+
+== Rebuild rules
+
+The task rebuilds when any of the following holds:
+
+* the output file (+upper.txt+) is missing,
+* there is no valid fingerprint record,
+* the caller supplied +version:+ changed (try <tt>rake VERSION=2</tt>),
+* the content of an input changed -- even if its mtime was restored,
+* the content of the output changed since the record was written.
+
+Touching files (mtime-only changes) never triggers a rebuild.  A failed
+action never updates the record, and if an input changes while the action
+runs, no completion is recorded and the next run rebuilds.
+
+Only explicitly declared prerequisites that are local regular files
+(Rake::FileTask) are fingerprinted.  Any other prerequisite (plain task,
+directory, ...) follows the documented conservative enforcement policy: it
+forces the task to be considered out of date on every run.
+
+== Fingerprint record recovery rules
+
+Records live in +.rake_fingerprints/+ as JSON files, written atomically
+(temp file + rename) after a successful action.
+
+* A missing record forces exactly one rebuild, then it is rewritten.
+* A corrupt or unreadable record is treated like a missing one: rebuild
+  and rewrite on success.  It is never a fatal error.
+* Leftover <tt>*.tmp-PID</tt> files from an interrupted write are ignored
+  and may be deleted; they never count as a valid completion.
+* Deleting a record (or the whole directory) is always safe and only
+  costs one rebuild.

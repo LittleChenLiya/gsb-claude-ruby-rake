@@ -1,0 +1,24 @@
+# Demo of Rake::FingerprintFileTask: rebuilds driven by explicit content
+# fingerprints (SHA-256 of inputs and outputs) plus a caller supplied
+# task version, instead of file mtimes.
+#
+# Try (from this directory):
+#
+#   rake                       # builds upper.txt and records fingerprints
+#   rake                       # skips: fingerprints still match
+#   touch message.txt; rake    # still skips: mtime alone never rebuilds
+#   edit message.txt; rake     # rebuilds, even if you restore the old mtime
+#   rake VERSION=2             # rebuilds: caller supplied version changed
+#   rm upper.txt; rake         # rebuilds: output is missing
+#   rm -rf .rake_fingerprints  # safe: costs exactly one rebuild
+
+require "rake/fingerprint_file_task"
+
+VERSION = Integer(ENV["VERSION"] || 1)
+
+fingerprint_file({ "upper.txt" => ["message.txt"] }, version: VERSION) do |t|
+  File.write(t.name, File.read(t.source).upcase)
+  puts "built #{t.name} (version #{t.task_version})"
+end
+
+task default: "upper.txt"

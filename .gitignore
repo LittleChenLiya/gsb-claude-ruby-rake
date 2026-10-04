@@ -13,3 +13,4 @@
 /_site
 /pkg
 Gemfile.lock
+.rake_fingerprints
