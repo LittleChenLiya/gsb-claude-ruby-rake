@@ -38,6 +38,9 @@ module Rake
     # will be skipped unless you reenable them.
     attr_reader :already_invoked
 
+    # The exception raised during the task's last invocation, if any.
+    attr_reader :invocation_exception
+
     # Return task name
     def to_s
       name
@@ -149,6 +152,13 @@ module Rake
       @invocation_exception = nil
     end
 
+    # Restore the invoke state of the task. Used by action scopes to
+    # roll back the effects of a temporary execution.
+    def restore_invoke_state(already_invoked, invocation_exception) # :nodoc:
+      @already_invoked = already_invoked
+      @invocation_exception = invocation_exception
+    end
+
     # Clear the existing prerequisites, actions, comments, and arguments of a rake task.
     def clear
       clear_prerequisites
@@ -188,6 +198,13 @@ module Rake
       invoke_with_call_chain(task_args, InvocationChain::EMPTY)
     end
 
+    # Temporarily replace this task's actions within the block. The task's
+    # original actions and previous invoke state are restored when the block
+    # exits. See Rake::Task.with_action for details.
+    def with_action(&block)
+      application.with_action_scope(name, &block)
+    end
+
     # Same as invoke, but explicitly pass a call chain to detect
     # circular dependencies.
     #
@@ -198,6 +215,7 @@ module Rake
       new_chain = Rake::InvocationChain.append(self, invocation_chain)
       @lock.synchronize do
         begin
+          application.record_action_scope_invocation(self)
           if application.options.trace
             application.trace "** Invoke #{name} #{format_trace_flags}"
           end
@@ -415,6 +433,20 @@ module Rake
       # the existing task.  Returns the defined task.
       def define_task(*args, &block)
         Rake.application.define_task(self, *args, &block)
+      end
+
+      # Temporarily replace the actions of the task named +task_name+ within
+      # the block. The block yields an ActionScope; use ActionScope#action to
+      # set the temporary action. When the block exits (normally or via an
+      # exception), the task's original actions and previous invoke state are
+      # restored. Only the explicitly given full task name is affected.
+      #
+      #   Rake::Task.with_action(:foo) do |scope|
+      #     scope.action { puts "temporary" }
+      #     Rake::Task[:foo].invoke
+      #   end
+      def with_action(task_name, &block)
+        Rake.application.with_action_scope(task_name, &block)
       end
 
       # Define a rule for synthesizing tasks.

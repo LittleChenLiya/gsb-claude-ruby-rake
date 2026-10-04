@@ -20,6 +20,37 @@ module Rake
       @rules << [pattern, args, deps, order_only, block]
     end
 
+    # Temporarily replace the actions of the task named +task_name+ within
+    # the block. The block yields a Rake::Task::ActionScope. The task's
+    # original actions and previous invoke state are restored when the block
+    # exits. See Rake::Task.with_action for the public entry point.
+    def with_action_scope(task_name)
+      task = lookup_action_scope_task(task_name)
+      scope = Rake::Task::ActionScope.new(task)
+      stack = action_scope_stack
+      stack.push(scope)
+      begin
+        scope.enter
+        yield scope
+      ensure
+        scope.exit
+        stack.pop
+      end
+    end
+
+    # Record the invocation of +task+ in the innermost active action scope,
+    # if any. Called by the task invocation hook.
+    def record_action_scope_invocation(task) # :nodoc:
+      stack = @action_scope_stack
+      return if stack.nil? || stack.empty?
+      stack.last.record_invocation(task)
+    end
+
+    # The stack of currently active action scopes for this application.
+    def action_scope_stack # :nodoc:
+      @action_scope_stack ||= []
+    end
+
     def define_task(task_class, *args, &block) # :nodoc:
       task_name, arg_names, deps, order_only = resolve_args(args)
 
@@ -236,6 +267,15 @@ module Rake
     end
 
     private
+
+    # Look up the task targeted by an action scope. Only the explicitly
+    # given full task name is used; no scope-relative lookup or synthesis is
+    # performed. Raises if the task is not defined.
+    def lookup_action_scope_task(task_name)
+      task_name = task_name.to_s
+      lookup(task_name, Rake::Scope::EMPTY) or
+        fail "Don't know how to build task '#{task_name}'"
+    end
 
     # Add a location to the locations field of the given task.
     def add_location(task)
