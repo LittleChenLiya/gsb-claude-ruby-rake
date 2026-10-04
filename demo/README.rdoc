@@ -1,0 +1,64 @@
+= Fingerprint File Task Demo
+
+This directory demonstrates the +fingerprint_file+ task, an explicit content
+fingerprint FileTask that decides whether to rebuild by comparing content
+digests of its explicit local regular file dependencies, the output file, and a
+caller-supplied task version -- not just mtime.
+
+== Three-file demonstration
+
+The demo builds one output (+out+) from two inputs (+a.in+ and +b.in+):
+
+  fingerprint_file "out" => ["a.in", "b.in"], :version => 1 do |t|
+    File.write(t.name, File.read("a.in") + File.read("b.in"))
+  end
+
+Try it:
+
+  $ rake -f Rakefile           # first run: builds out
+  $ rake -f Rakefile           # second run: skips (up to date)
+  $ rake -f Rakefile demo:touch   # touch mtime only (content unchanged)
+  $ rake -f Rakefile           # skips (content unchanged)
+  $ rake -f Rakefile demo:change  # change content but restore mtime
+  $ rake -f Rakefile           # reruns (content changed)
+
+A regular +file+ task (+regular.out+) is included for comparison.  It keeps
+timestamp semantics: touching the mtime of +a.in+ (without changing content)
+causes +regular.out+ to rebuild, while +out+ does not.
+
+== Fingerprint record
+
+After a successful run, a fingerprint record is written atomically next to the
+output file (+.out.fingerprint+).  The record is a JSON document containing the
+caller version and the SHA-256 digests of the inputs and output:
+
+  {
+    "version": "1",
+    "inputs": {
+      "a.in": "<digest>",
+      "b.in": "<digest>"
+    },
+    "output": "<digest>"
+  }
+
+== Recovery rules
+
+The task rebuilds when any of the following holds:
+
+* the output file is missing;
+* the fingerprint record is missing, unreadable, or corrupt;
+* the recorded version differs from the current caller-supplied version;
+* the digest of any explicit file prerequisite differs from the record;
+* the digest of the output file differs from the record;
+* a prerequisite is not an existing local regular file (non-file tasks,
+  directories, missing files) -- these cannot be fingerprinted and always
+  force execution.
+
+The record is only written after the action succeeds and the input content did
+not change during the action.  If the action raises, or if the input content
+changed during the action, no valid record is kept and the next run must
+rebuild.
+
+== Local Minitest command
+
+  ruby -Ilib -Itest test/test_rake_fingerprint_file_task.rb

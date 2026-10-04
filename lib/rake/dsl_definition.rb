@@ -83,6 +83,26 @@ module Rake
       Rake::FileCreationTask.define_task(*args, &block)
     end
 
+    # Declare a fingerprint file task.  A fingerprint file task decides
+    # whether to rebuild by comparing content fingerprints (digests) of its
+    # explicit local regular file prerequisites, the output file, and a
+    # caller-supplied task version, rather than relying on mtime alone.
+    #
+    # Example:
+    #   fingerprint_file "config.cfg" => ["config.template"], :version => 1 do |t|
+    #     open("config.cfg", "w") do |outfile|
+    #       open("config.template") do |infile|
+    #         while line = infile.gets
+    #           outfile.puts line
+    #         end
+    #       end
+    #     end
+    #   end
+    #
+    def fingerprint_file(*args, &block) # :doc:
+      Rake::FingerprintFileTask.define_task(*args, &block)
+    end
+
     # Declare a set of files tasks to create the given directories on
     # demand.
     #

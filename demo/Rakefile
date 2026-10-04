@@ -1,0 +1,57 @@
+# Three-file demonstration of the fingerprint file task.
+#
+# Usage:
+#   rake -f Rakefile              # build the output
+#   rake -f Rakefile              # second run: should skip (up to date)
+#   rake -f Rakefile demo:touch   # touch mtime only (content unchanged)
+#   rake -f Rakefile demo:change  # change content but restore mtime
+#
+# The fingerprint file task decides whether to rebuild by comparing content
+# digests of the two inputs (a.in, b.in), the output (out), and the task
+# version, rather than relying on mtime alone.
+
+require "rake/fingerprint_file_task"
+
+task :default => ["out"]
+
+# Declare the input files (they exist on disk after the first build).
+file "a.in"
+file "b.in"
+
+# Two explicit local regular file dependencies feeding one output.
+fingerprint_file "out" => ["a.in", "b.in"], :version => 1 do |t|
+  puts "Building #{t.name}..."
+  File.write(t.name, File.read("a.in") + File.read("b.in"))
+end
+
+# A regular file task for comparison: it keeps timestamp semantics.
+file "regular.out" => ["a.in"] do |t|
+  puts "Building #{t.name} (regular file task)..."
+  File.write(t.name, File.read("a.in").upcase)
+end
+
+namespace :demo do
+  desc "Touch only the mtime of the inputs (content unchanged)"
+  task :touch do
+    future = Time.now + 3600
+    File.utime(future, future, "a.in")
+    File.utime(future, future, "b.in")
+    puts "Touched mtime of a.in and b.in (content unchanged)"
+  end
+
+  desc "Change the content of a.in but restore its mtime"
+  task :change do
+    old = File.mtime("a.in")
+    File.write("a.in", "ALPHA-#{rand(1000)}")
+    File.utime(old, old, "a.in")
+    puts "Changed content of a.in but restored its mtime"
+  end
+end
+
+task :clean do
+  rm_f "out"
+  rm_f "regular.out"
+  rm_f ".out.fingerprint"
+  rm_f "a.in"
+  rm_f "b.in"
+end
