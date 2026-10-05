@@ -155,4 +155,99 @@ class TestRakeTaskArguments < Rake::TestCase # :nodoc:
     assert_equal [], ta.extras
   end
 
+  def test_trace_records_actual_sources_with_scope
+    ta = Rake::TaskArguments.new([:a, :b], [1, 2], nil, "parent")
+    assert_equal(
+      { a: { kind: :actual, scope: "parent" },
+        b: { kind: :actual, scope: "parent" } },
+      ta.trace
+    )
+  end
+
+  def test_trace_records_default_sources_with_scope
+    ta = Rake::TaskArguments.new([:a, :b], [1, nil], nil, "child")
+    ta.with_defaults(b: "default_b")
+    assert_equal(
+      { a: { kind: :actual, scope: "child" },
+        b: { kind: :default, scope: "child" } },
+      ta.trace
+    )
+  end
+
+  def test_trace_records_forwarded_sources_with_parent_scope
+    parent = Rake::TaskArguments.new([:a, :b], [1, 2], nil, "parent")
+    child = parent.new_scope([:a, :c], scope: "child")
+    assert_equal(
+      { a: { kind: :forwarded, scope: "parent" } },
+      child.trace
+    )
+  end
+
+  def test_trace_forwarded_then_default
+    parent = Rake::TaskArguments.new([:a], [1], nil, "parent")
+    child = parent.new_scope([:a, :c], scope: "child")
+    child.with_defaults(c: "default_c")
+    assert_equal(
+      { a: { kind: :forwarded, scope: "parent" },
+        c: { kind: :default, scope: "child" } },
+      child.trace
+    )
+  end
+
+  def test_trace_does_not_include_values
+    ta = Rake::TaskArguments.new([:secret], ["s3cr3t"], nil, "task")
+    trace = ta.trace
+    assert_equal({ secret: { kind: :actual, scope: "task" } }, trace)
+    refute_includes trace.inspect, "s3cr3t"
+  end
+
+  def test_bound_defaults_to_false
+    ta = Rake::TaskArguments.new([:a], [1], nil, "task")
+    assert_equal false, ta.bound
+  end
+
+  def test_bound_can_be_set_and_reset
+    ta = Rake::TaskArguments.new([:a], [1], nil, "task")
+    ta.bound = true
+    assert_equal true, ta.bound
+    ta.bound = false
+    assert_equal false, ta.bound
+  end
+
+  def test_same_name_arguments_are_independent_across_scopes
+    parent = Rake::TaskArguments.new([:a], [1], nil, "parent")
+    child1 = parent.new_scope([:a], scope: "child1")
+    child2 = parent.new_scope([:a], scope: "child2")
+    child1.with_defaults(a: "default1")
+    child2.with_defaults(a: "default2")
+    assert_equal({ kind: :forwarded, scope: "parent" }, child1.trace[:a])
+    assert_equal({ kind: :forwarded, scope: "parent" }, child2.trace[:a])
+    assert_equal 1, child1[:a]
+    assert_equal 1, child2[:a]
+  end
+
+  def test_default_only_applied_when_value_missing
+    ta = Rake::TaskArguments.new([:a, :b], [1, nil], nil, "task")
+    ta.with_defaults(a: "default_a", b: "default_b")
+    assert_equal 1, ta[:a]
+    assert_equal "default_b", ta[:b]
+    assert_equal(
+      { a: { kind: :actual, scope: "task" },
+        b: { kind: :default, scope: "task" } },
+      ta.trace
+    )
+  end
+
+  def test_new_scope_without_scope_uses_parent_scope
+    parent = Rake::TaskArguments.new([:a], [1], nil, "parent")
+    child = parent.new_scope([:a])
+    assert_equal "parent", child.scope
+  end
+
+  def test_new_scope_with_scope_overrides_parent_scope
+    parent = Rake::TaskArguments.new([:a], [1], nil, "parent")
+    child = parent.new_scope([:a], scope: "child")
+    assert_equal "child", child.scope
+  end
+
 end

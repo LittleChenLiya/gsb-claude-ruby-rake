@@ -38,6 +38,11 @@ module Rake
     # will be skipped unless you reenable them.
     attr_reader :already_invoked
 
+    # The TaskArguments from the most recent invocation (including a
+    # skipped invocation).  Useful for inspecting whether a task was
+    # actually bound or merely skipped.
+    attr_reader :last_args
+
     # Return task name
     def to_s
       name
@@ -184,7 +189,7 @@ module Rake
 
     # Invoke the task if it is needed.  Prerequisites are invoked first.
     def invoke(*args)
-      task_args = TaskArguments.new(arg_names, args)
+      task_args = TaskArguments.new(arg_names, args, nil, name)
       invoke_with_call_chain(task_args, InvocationChain::EMPTY)
     end
 
@@ -198,6 +203,7 @@ module Rake
       new_chain = Rake::InvocationChain.append(self, invocation_chain)
       @lock.synchronize do
         begin
+          @last_args = task_args
           if application.options.trace
             application.trace "** Invoke #{name} #{format_trace_flags}"
           end
@@ -209,12 +215,13 @@ module Rake
               end
               raise @invocation_exception
             else
+              task_args.bound = false
               return
             end
           end
 
           @already_invoked = true
-
+          task_args.bound = true
           invoke_prerequisites(task_args, new_chain)
           execute(task_args) if needed?
         rescue Exception => ex
@@ -239,7 +246,7 @@ module Rake
         invoke_prerequisites_concurrently(task_args, invocation_chain)
       else
         prerequisite_tasks.each { |p|
-          prereq_args = task_args.new_scope(p.arg_names)
+          prereq_args = task_args.new_scope(p.arg_names, scope: p.name)
           p.invoke_with_call_chain(prereq_args, invocation_chain)
         }
       end
@@ -248,7 +255,7 @@ module Rake
     # Invoke all the prerequisites of a task in parallel.
     def invoke_prerequisites_concurrently(task_args, invocation_chain)# :nodoc:
       futures = prerequisite_tasks.map do |p|
-        prereq_args = task_args.new_scope(p.arg_names)
+        prereq_args = task_args.new_scope(p.arg_names, scope: p.name)
         application.thread_pool.future(p) do |r|
           r.invoke_with_call_chain(prereq_args, invocation_chain)
         end

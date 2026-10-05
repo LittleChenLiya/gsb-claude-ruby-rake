@@ -16,11 +16,18 @@ require "test/unit"
 require "rake"
 require "tmpdir"
 
+if ENV["RAKE_USE_MINITEST"]
+  require "minitest/autorun"
+  test_case_class = Minitest::Test
+else
+  test_case_class = Test::Unit::TestCase
+end
+
 require_relative "support/file_creation"
 require_relative "support/ruby_runner"
 require_relative "support/rakefile_definitions"
 
-class Rake::TestCase < Test::Unit::TestCase
+class Rake::TestCase < test_case_class
   include FileCreation
 
   include Rake::DSL
@@ -90,6 +97,27 @@ class Rake::TestCase < Test::Unit::TestCase
     yield
   ensure
     Rake.application.options.ignore_deprecate = false
+  end
+
+  if ENV["RAKE_USE_MINITEST"]
+    alias omit skip
+
+    def self.test(name, &block)
+      define_method("test_#{name.gsub(/\W/, '_')}", &block)
+    end
+
+    def capture_output
+      require "stringio"
+      orig_stdout = $stdout
+      orig_stderr = $stderr
+      $stdout = StringIO.new
+      $stderr = StringIO.new
+      yield
+      [$stdout.string, $stderr.string]
+    ensure
+      $stdout = orig_stdout
+      $stderr = orig_stderr
+    end
   end
 
   def rake_system_dir

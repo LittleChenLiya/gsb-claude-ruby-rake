@@ -24,6 +24,17 @@ Rake::TestTask.new(:test) do |t|
   t.test_files = FileList["test/**/test_*.rb"]
 end
 
+Rake::TestTask.new(:minitest) do |t|
+  t.libs << "test"
+  t.verbose = true
+  t.test_files = FileList["test/**/test_*.rb"]
+  t.deps = [:use_minitest]
+end
+
+task :use_minitest do
+  ENV["RAKE_USE_MINITEST"] = "true"
+end
+
 require "rdoc/task"
 RDoc::Task.new do |doc|
   doc.main   = "README.rdoc"

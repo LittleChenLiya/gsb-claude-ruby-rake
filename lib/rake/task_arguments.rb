@@ -10,16 +10,29 @@ module Rake
     # Argument names
     attr_reader :names
 
+    # The task scope these arguments belong to.  Used as the scope for
+    # default values applied to this task.
+    attr_reader :scope
+
+    # Whether the task owning these arguments actually bound (executed)
+    # them.  Skipped (already invoked) tasks leave this false.
+    attr_accessor :bound
+
     # Create a TaskArgument object with a list of argument +names+ and a set
     # of associated +values+.  +parent+ is the parent argument object.
-    def initialize(names, values, parent=nil)
+    # +scope+ is the name of the task these arguments belong to.
+    def initialize(names, values, parent=nil, scope=nil)
       @names = names
       @parent = parent
+      @scope = scope
       @hash = {}
       @values = values
+      @sources = {}
+      @bound = false
       names.each_with_index { |name, i|
         next if values[i].nil? || values[i] == ""
         @hash[name.to_sym] = values[i]
+        @sources[name.to_sym] = source_entry(:actual, scope)
       }
     end
 
@@ -34,10 +47,20 @@ module Rake
     end
 
     # Create a new argument scope using the prerequisite argument
-    # names.
-    def new_scope(names)
+    # names.  The +scope+ parameter names the prerequisite task so that
+    # forwarded values can be distinguished from values bound in the
+    # prerequisite itself.
+    def new_scope(names, scope: nil)
       values = names.map { |n| self[n] }
-      self.class.new(names, values + extras, self)
+      child_scope = scope || @scope
+      child = self.class.new(names, values + extras, self, child_scope)
+      names.each do |n|
+        sym = n.to_sym
+        if @sources[sym]
+          child.sources[sym] = source_entry(:forwarded, @scope)
+        end
+      end
+      child
     end
 
     # Find an argument value by name or index.
@@ -47,9 +70,18 @@ module Rake
 
     # Specify a hash of default values for task arguments. Use the
     # defaults only if there is no specific value for the given
-    # argument.
+    # argument.  Each default is recorded with the task's scope so the
+    # source can be traced without inspecting the final value.
     def with_defaults(defaults)
-      @hash = defaults.merge(@hash)
+      defaults.each do |key, value|
+        sym = key.to_sym
+        next unless arg_names.include?(sym)
+        unless @hash.has_key?(sym)
+          @hash[sym] = value
+          @sources[sym] = source_entry(:default, @scope)
+        end
+      end
+      self
     end
 
     # Enumerates the arguments and their values
@@ -70,6 +102,14 @@ module Rake
     # Returns a Hash of arguments and their values
     def to_hash
       @hash.dup
+    end
+
+    # Returns a trace of argument sources.  Each entry maps an argument
+    # name to a Hash containing the +kind+ (:actual, :default, or
+    # :forwarded) and the +scope+ (task name) where the value was bound.
+    # Values are never included in the trace.
+    def trace
+      @sources.transform_values { |entry| entry.dup }
     end
 
     def to_s # :nodoc:
@@ -100,12 +140,26 @@ module Rake
 
     protected
 
+    def sources
+      @sources
+    end
+
     def lookup(name) # :nodoc:
       if @hash.has_key?(name)
         @hash[name]
       elsif @parent
         @parent.lookup(name)
       end
+    end
+
+    private
+
+    def arg_names
+      @arg_names ||= @names.map(&:to_sym)
+    end
+
+    def source_entry(kind, scope)
+      { kind: kind, scope: scope }
     end
   end
 
