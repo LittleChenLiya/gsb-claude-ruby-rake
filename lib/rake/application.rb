@@ -36,6 +36,19 @@ module Rake
     # List of the top level task names (task names from the command line).
     attr_reader :top_level_tasks
 
+    # Trace of task argument binding events, in the order they occurred.
+    #
+    # Each entry is a Hash containing only the task name, an event kind,
+    # and (for +:bind+ events) a map of argument names to their recorded
+    # sources -- argument values are never stored in the trace:
+    #
+    #   { task: "build", event: :bind, sources: { env: :argument } }
+    #   { task: "build", event: :skipped, reason: :already_invoked }
+    #
+    # The trace is held per Application instance, so concurrent
+    # applications never see each other's entries.
+    attr_reader :argument_source_trace
+
     # Override the detected TTY output state (mostly for testing)
     attr_writer :tty_output
 
@@ -58,6 +71,8 @@ module Rake
       @default_loader = Rake::DefaultLoader.new
       @original_dir = Dir.pwd
       @top_level_tasks = []
+      @argument_source_trace = []
+      @argument_scope_stack = []
       add_loader("rb", DefaultLoader.new)
       add_loader("rf", DefaultLoader.new)
       add_loader("rake", DefaultLoader.new)
@@ -181,6 +196,37 @@ module Rake
       name, args = parse_task_string(task_string)
       t = self[name]
       t.invoke(*args)
+    end
+
+    # Names of the tasks whose argument scope is currently open
+    # (innermost last).  The scope is restored when each invocation
+    # finishes, so a completed invocation never leaks its scope into
+    # the next call.
+    def current_argument_scope # :nodoc:
+      @argument_scope_stack.dup
+    end
+
+    # Record that +task_name+ actually bound arguments with the given
+    # name => source map.  Only names and sources are stored, never
+    # argument values.
+    def record_argument_binding(task_name, sources) # :nodoc:
+      @argument_source_trace <<
+        { task: task_name.to_s, event: :bind, sources: sources }
+    end
+
+    # Record that +task_name+ was skipped (e.g. because it was already
+    # invoked) and therefore did NOT bind arguments again.
+    def record_argument_skip(task_name, reason) # :nodoc:
+      @argument_source_trace <<
+        { task: task_name.to_s, event: :skipped, reason: reason }
+    end
+
+    def push_argument_scope(task_name) # :nodoc:
+      @argument_scope_stack.push(task_name.to_s)
+    end
+
+    def pop_argument_scope # :nodoc:
+      @argument_scope_stack.pop
     end
 
     def parse_task_string(string) # :nodoc:

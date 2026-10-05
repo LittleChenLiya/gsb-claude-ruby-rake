@@ -209,14 +209,27 @@ module Rake
               end
               raise @invocation_exception
             else
+              # An already invoked (cached) task does not bind its
+              # arguments again; record the skip explicitly instead of
+              # pretending a binding happened.
+              application.record_argument_skip(name, :already_invoked)
               return
             end
           end
 
           @already_invoked = true
 
-          invoke_prerequisites(task_args, new_chain)
-          execute(task_args) if needed?
+          application.push_argument_scope(name)
+          begin
+            invoke_prerequisites(task_args, new_chain)
+            execute(task_args) if needed?
+            # Record the binding only for tasks that actually ran.
+            # Defaults applied while executing are included; argument
+            # values are never recorded, only names and sources.
+            application.record_argument_binding(name, task_args.source_trace)
+          ensure
+            application.pop_argument_scope
+          end
         rescue Exception => ex
           add_chain_to(ex, new_chain)
           @invocation_exception = ex

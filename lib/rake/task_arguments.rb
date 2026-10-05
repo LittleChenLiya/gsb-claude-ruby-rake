@@ -10,6 +10,20 @@ module Rake
     # Argument names
     attr_reader :names
 
+    # Source kinds recorded for argument bindings.  The source of an
+    # argument is tracked explicitly at the moment the binding is
+    # created; it is never guessed from the final value.
+    #
+    # [+:argument+]  the value was explicitly supplied when the task
+    #                was invoked.
+    # [+:forwarded+] the value was forwarded from the argument scope of
+    #                the task that invoked this one (via +new_scope+).
+    # [+:default+]   the value came from +with_defaults+ because no
+    #                explicit or forwarded value was present.
+    SOURCE_ARGUMENT  = :argument
+    SOURCE_FORWARDED = :forwarded
+    SOURCE_DEFAULT   = :default
+
     # Create a TaskArgument object with a list of argument +names+ and a set
     # of associated +values+.  +parent+ is the parent argument object.
     def initialize(names, values, parent=nil)
@@ -17,9 +31,12 @@ module Rake
       @parent = parent
       @hash = {}
       @values = values
+      @sources = {}
+      origin = parent ? SOURCE_FORWARDED : SOURCE_ARGUMENT
       names.each_with_index { |name, i|
         next if values[i].nil? || values[i] == ""
         @hash[name.to_sym] = values[i]
+        @sources[name.to_sym] = origin
       }
     end
 
@@ -48,8 +65,51 @@ module Rake
     # Specify a hash of default values for task arguments. Use the
     # defaults only if there is no specific value for the given
     # argument.
+    #
+    # A default is recorded as the source of an argument only when the
+    # argument has no binding in this scope yet; existing bindings keep
+    # their original source, and applying defaults again does not
+    # re-record (or re-apply) sources that are already known.
     def with_defaults(defaults)
+      defaults.each_key do |key|
+        key = key.to_sym
+        @sources[key] = SOURCE_DEFAULT unless @sources.has_key?(key)
+      end
       @hash = defaults.merge(@hash)
+    end
+
+    # Returns the source of the given argument (+:argument+,
+    # +:forwarded+ or +:default+), searching parent scopes when the
+    # name is not bound in this scope.  Returns nil when the argument
+    # is not bound anywhere in the scope chain.
+    def source_of(name)
+      name = name.to_sym
+      if @sources.has_key?(name)
+        @sources[name]
+      elsif @parent
+        @parent.source_of(name)
+      end
+    end
+
+    # Returns the chain of sources recorded for +name+, starting with
+    # this scope and walking outward through parent scopes.  Only
+    # scopes that actually bind the name contribute to the chain.
+    def source_chain(name)
+      name = name.to_sym
+      chain = []
+      chain << @sources[name] if @sources.has_key?(name)
+      chain.concat(@parent.source_chain(name)) if @parent
+      chain
+    end
+
+    # Returns a map of argument names to their recorded sources for the
+    # whole scope chain.  Argument values are never included.  When
+    # several scopes bind the same name, the innermost scope wins
+    # (mirroring value lookup).
+    def source_trace
+      trace = @parent ? @parent.source_trace : {}
+      @sources.each { |key, source| trace[key] = source }
+      trace
     end
 
     # Enumerates the arguments and their values
