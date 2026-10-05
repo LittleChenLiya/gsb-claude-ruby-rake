@@ -164,6 +164,37 @@ to do extra synchronization for Rake's benefit.  However, if there are
 user data structures shared between the parallel prerequisites, the
 user must do whatever is necessary to prevent race conditions.
 
+=== Canceling a Multitask
+
+A running multitask invocation can be canceled explicitly by calling
++cancel+ on the task object from another thread:
+
+  task_obj = Rake::Task[:copy_files]
+  Thread.new { task_obj.invoke }
+  # ... later, from a different thread:
+  task_obj.cancel
+
+Cancellation is cooperative and never interrupts work that is already
+running:
+
+* A prerequisite that has already started is allowed to finish. It may
+  call <tt>Rake::Task[:copy_files].canceled?</tt> to notice the request
+  and wind its own work down early.
+* A prerequisite that has not started yet is not executed at all.
+* The multitask's own actions do not run after a cancellation.
+
++cancel+ does not return until every prerequisite that was actually in
+flight has completed; merely queued prerequisites do not delay it.
+
+The cancellation is scoped to a single invocation. It is visible only
+to the prerequisites of that invocation and is never stored on the
+thread-pool worker threads, so a worker reused by a later invocation
+carries no canceled state. Prerequisites that had already completed
+successfully keep their normal cached invocation state; as usual, a
+later invocation needs +reenable+ before those tasks run again. Because
++cancel+ waits for in-flight prerequisites, it must not be called from
+inside one of that invocation's own prerequisites.
+
 == Tasks with Arguments
 
 Prior to version 0.8.0, rake was only able to handle command line

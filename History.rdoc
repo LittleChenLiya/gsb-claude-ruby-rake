@@ -1,3 +1,7 @@
+=== 13.4.2
+
+* Add Rake::MultiTask#cancel for explicitly canceling a multitask invocation. Prerequisites that have not started are not executed, prerequisites already in progress are allowed to finish cooperatively, and the multitask's own actions are skipped. Cancellation is scoped to the invocation (it never leaks to reused pool threads), returns only after in-flight prerequisites complete, and leaves the normal cached state of successfully completed prerequisites unchanged.
+
 === 13.2.1
 
 * Suppressed "internal:array:52:in 'Array#each'" from backtrace by @hsbt in #554

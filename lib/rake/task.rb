@@ -216,7 +216,7 @@ module Rake
           @already_invoked = true
 
           invoke_prerequisites(task_args, new_chain)
-          execute(task_args) if needed?
+          execute(task_args) if needed? && continue_after_prerequisites?
         rescue Exception => ex
           add_chain_to(ex, new_chain)
           @invocation_exception = ex
@@ -247,14 +247,39 @@ module Rake
 
     # Invoke all the prerequisites of a task in parallel.
     def invoke_prerequisites_concurrently(task_args, invocation_chain)# :nodoc:
+      # Pick up the active cancellation (if any) before leaving the
+      # invoking thread. Cancellations are visible only through this
+      # captured object and are never stored on the pool threads
+      # themselves, so a reused thread never carries one over.
+      cancellation = MultiTask.active_cancellation
       futures = prerequisite_tasks.map do |p|
         prereq_args = task_args.new_scope(p.arg_names)
-        application.thread_pool.future(p) do |r|
-          r.invoke_with_call_chain(prereq_args, invocation_chain)
+        application.thread_pool.future(p, cancellation) do |r, cancel|
+          # A prerequisite that never started must not run after the
+          # parent was canceled. A prerequisite already executing is
+          # left alone so it can finish cooperatively.
+          if cancel
+            next unless cancel.begin_attempt
+            begin
+              r.invoke_with_call_chain(prereq_args, invocation_chain)
+            ensure
+              cancel.finish
+            end
+          else
+            r.invoke_with_call_chain(prereq_args, invocation_chain)
+          end
         end
       end
       # Iterate in reverse to improve performance related to thread waiting and switching
       futures.reverse_each(&:value)
+    end
+
+    # Whether the task's own actions may run after its prerequisites
+    # have been invoked. Always true for regular tasks. Rake::MultiTask
+    # overrides this to skip the parent actions when its invocation was
+    # canceled.
+    def continue_after_prerequisites? # :nodoc:
+      true
     end
 
     # Format the trace flags for display.
