@@ -88,6 +88,11 @@ module Rake
       }
     end
 
+    # The maximum number of threads the pool may use concurrently.
+    def max_threads             # :nodoc:
+      @max_active_threads
+    end
+
     private
 
     # processes one item on the queue. Returns true if there was an

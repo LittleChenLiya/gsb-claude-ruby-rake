@@ -103,4 +103,128 @@ class TestRakeMultiTask < Rake::TestCase # :nodoc:
       refute task_two_was_executed
     end
   end
+
+  def test_cancel_skips_queued_prerequisites
+    Rake.application.options.thread_pool_size = 1
+
+    release = Queue.new
+    started = Queue.new
+
+    task :first do
+      add_run("first-start")
+      started << :go
+      release.pop
+      add_run("first-end")
+    end
+
+    task :second do
+      add_run("second")
+    end
+
+    multitask build: [:first, :second] do
+      add_run("parent")
+    end
+
+    invoke_thread = Thread.new { Rake::Task[:build].invoke }
+    started.pop # wait until :first is running (and blocked)
+
+    cancel_thread = Thread.new { Rake::Task[:build].cancel }
+    sleep 0.1
+
+    # :second is queued behind :first; it must not have run.
+    refute_includes @runs, "second"
+    refute_includes @runs, "parent"
+
+    # cancel blocks until in-flight work finishes, so it must still be
+    # running while :first is blocked.
+    assert cancel_thread.alive?
+
+    release << :go
+    cancel_thread.join
+    invoke_thread.join
+
+    # :first was allowed to finish, but :second and the parent action did
+    # not run.
+    assert_includes @runs, "first-start"
+    assert_includes @runs, "first-end"
+    refute_includes @runs, "second"
+    refute_includes @runs, "parent"
+  ensure
+    Rake.application.thread_pool.join
+  end
+
+  def test_cancel_does_not_affect_normal_invoke
+    Rake.application.options.thread_pool_size = 1
+
+    task :a do
+      add_run("a")
+    end
+
+    task :b do
+      add_run("b")
+    end
+
+    multitask both: [:a, :b] do
+      add_run("parent")
+    end
+
+    Rake::Task[:both].invoke
+
+    assert_equal ["a", "b", "parent"], @runs
+  end
+
+  def test_cancel_reenable_protocol
+    Rake.application.options.thread_pool_size = 1
+
+    release = Queue.new
+    started = Queue.new
+
+    task :first do
+      add_run("first-start")
+      started << :go
+      release.pop
+      add_run("first-end")
+    end
+
+    task :second do
+      add_run("second")
+    end
+
+    multitask build: [:first, :second] do
+      add_run("parent")
+    end
+
+    invoke_thread = Thread.new { Rake::Task[:build].invoke }
+    started.pop
+
+    cancel_thread = Thread.new { Rake::Task[:build].cancel }
+    sleep 0.1
+
+    release << :go
+    cancel_thread.join
+    invoke_thread.join
+
+    refute_includes @runs, "second"
+    refute_includes @runs, "parent"
+
+    # Reusing a pooled thread for the next call must work normally.
+    task :other do
+      add_run("other")
+    end
+    Rake::Task[:other].invoke
+    assert_includes @runs, "other"
+
+    # The normal cache of already-run tasks is unchanged; use the existing
+    # reenable protocol to run them again.
+    release << :go
+    Rake::Task[:build].reenable
+    Rake::Task[:first].reenable
+    Rake::Task[:second].reenable
+    Rake::Task[:build].invoke
+
+    assert_includes @runs, "second"
+    assert_includes @runs, "parent"
+  ensure
+    Rake.application.thread_pool.join
+  end
 end

@@ -16,6 +16,7 @@ module Rake
     # Create a promise to do the chore specified by the block.
     def initialize(args, &block)
       @mutex = Mutex.new
+      @cond = ConditionVariable.new
       @result = NOT_SET
       @error = NOT_SET
       @args = args
@@ -41,14 +42,23 @@ module Rake
     # If no one else is working this promise, go ahead and do the chore.
     def work
       stat :attempting_lock_on, item_id: object_id
-      if @mutex.try_lock
+      @mutex.synchronize do
         stat :has_lock_on, item_id: object_id
         chore
         stat :releasing_lock_on, item_id: object_id
-        @mutex.unlock
-      else
-        stat :bailed_on, item_id: object_id
       end
+    end
+
+    # Wait for this promise to complete without running the chore.
+    #
+    # Unlike #value, this will not execute the block in the current
+    # thread. It is used when the caller must not steal queued work (e.g.
+    # cancellation, where a not-yet-started dependency must be skipped).
+    def wait
+      @mutex.synchronize do
+        @cond.wait(@mutex) until complete?
+      end
+      error? ? raise(@error) : @result
     end
 
     private
@@ -67,6 +77,7 @@ module Rake
       end
       stat :did_execute, item_id: object_id
       discard
+      @cond.broadcast
     end
 
     # Do we have a result for the promise
